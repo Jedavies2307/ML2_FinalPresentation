@@ -1,0 +1,558 @@
+> rm(list=ls())
+> set.seed(1693) #Go Tribe!
+> #intall.packages("gbm")
+> #install.packages("e1071")
+> #install.packages("keras")
+> #install.packages("xgboost")
+> library(gbm)
+> library(e1071)
+> library(tidyr)
+> library(dplyr)
+> library(readr)
+> library(keras)
+> library(caret)
+> library(xgboost)
+> ##########################################Training Data Prep##########################################################
+> #read in data
+> data_train <- read.csv("C:/Users/James/Desktop/ML2_Final_Proj_Data/train.csv/train.csv", stringsAsFactors = T, header=T)
+> #drop row Id column
+> data_train = data_train[,2:7]
+> #drop county and state
+> data_train = data_train[,-c(2:3)]
+> #drop active column
+> data_train = data_train[,-4]
+> #make into a dataframe
+> df_train = data.frame(data_train)
+> #change first day of month to a date type
+> df_train$first_day_of_month = as.Date(df_train$first_day_of_month)
+> #create an empty month list
+> month = c()
+> #extract the months from the date in each row and store in month variable created above
+> for (i in 1:nrow(df_train)){
++        month[i] = as.numeric(format(as.Date(df_train$first_day_of_month[i]),"%m"))}
+> #add month to the data frame
+> df_train['month']=month
+> #create an empty year list
+> year=c()
+> #extract the years from the date in each row and store in year variable created above
+> for (i in 1:nrow(df_train)){
++        year[i] = as.numeric(format(as.Date(df_train$first_day_of_month[i]),"%Y"))}
+> #add year to the data frame
+> df_train['year']= year
+> #remove first day of month
+> df_train= df_train[,-2] 
+> #create x and y features from data frame
+> x_features_train = df_train[,-2]
+> y_features_train = df_train[,2]
+> 
+> #read in Census Data
+> Census_Data <- read.csv("C:/Users/James/Desktop/ML2_Final_Proj_Data/census_starter.csv", stringsAsFactors = T, header=T)
+> #Combine x features and census data
+> df_combined_train <- merge(x = Census_Data, y = x_features_train, by = "cfips")
+> #create data for models to train on
+> df_for_models_train = df_combined_train
+> #add in Y target for models to train on that need it
+> df_for_models_train["Y_Target"] = y_features_train
+> ##########################################Testing Data Prep##########################################################
+> #read in testing data
+> data_test <- read.csv("C:/Users/James/Desktop/ML2_Final_Proj_Data/test.csv", stringsAsFactors = T, header=T)
+> #drop row id
+> data_test = data_test[,-1]
+> #make it into a data frame
+> df_test = data.frame(data_test)
+> #make first day of month date type
+> df_test$first_day_of_month = as.Date(df_test$first_day_of_month)
+> #create empty month list to store months
+> month = c()
+> #extract month from data
+> for (i in 1:nrow(df_test)){
++        month[i] = as.numeric(format(as.Date(df_test$first_day_of_month[i]),"%m"))}
+> #add month back into data frame
+> df_test['month']=month
+> #create emty year list to store years
+> year=c()
+> #extract year from each row in data
+> for (i in 1:nrow(df_test)){
++        year[i] = as.numeric(format(as.Date(df_test$first_day_of_month[i]),"%Y"))}
+> #add year in as a new column
+> df_test['year']= year
+> #drop day of month 
+> df_test= df_test[,-2]
+> #read in census data
+> Census_Data <- read.csv("C:/Users/James/Desktop/ML2_Final_Proj_Data/census_starter.csv", stringsAsFactors = T, header=T)
+> #Combine x features and census data
+> df_combined_test <- merge(x = Census_Data, y = df_test, by = "cfips")
+> #create new df for testing models on
+> df_for_models_test = df_combined_test
+> #Remove the 2023 data so we can use revealed test to evaluate
+> df_for_models_test_no2023 = df_for_models_test[df_for_models_test$year != 2023, ]
+> #re-order data so that it matches revealed test data
+> df_for_models_test_no2023 = df_for_models_test_no2023[order(df_for_models_test_no2023$cfips,df_for_models_test_no2023$month),]
+> #load in revealed test data
+> data_test_revealed <- read.csv("C:/Users/James/Desktop/ML2_Final_Proj_Data/revealed_test.csv", stringsAsFactors = T, header=T)
+> #extract Y features from revealed test data
+> y_features_test = data_test_revealed[,6]
+> ##########################################Cleaning Data##########################################################
+> #cleaning data
+> #create train & test matrixes from data wrangling above
+> x_train = as.matrix(df_combined_train)#comes from merging train.csv & census_starter.csv 
+> x_test = as.matrix(df_for_models_test_no2023)#comes from merging test.csv & census_starter.csv then removing all 2023 data
+> y_train = as.matrix(y_features_train)#comes from train.csv
+> y_test = as.matrix(y_features_test)#comes from revealed_test.csv
+> #check to see if there are any Na values in data that need to be dealt with
+> any(is.na(x_train))#True
+[1] TRUE
+> any(is.na(y_train))#False
+[1] FALSE
+> any(is.na(x_test))#True
+[1] TRUE
+> any(is.na(y_test))#False
+[1] FALSE
+> #looks like there are
+> #merge x and y datasets together so that when we remove an na we remove from both train and test
+> train = cbind(x_train,y_train)
+> test = cbind(x_test,y_test)
+> #na_rows <- apply(train, 1, function(x) any(is.nan(x)))
+> #remove NA's from the data set
+> train = na.omit(train)
+> test = na.omit(test)
+> #re create training and testing sets 
+> x_train = train[,-29]
+> y_train = train[,29]
+> x_test = test[,-29]
+> y_test = test[,29]
+> #check to see if there are any other Na values left in data that need to be dealt with
+> any(is.na(x_train))#False
+[1] FALSE
+> any(is.na(y_train))#False
+[1] FALSE
+> any(is.na(x_test))#False
+[1] FALSE
+> any(is.na(y_test))#False
+[1] FALSE
+> #we dealt with all of them
+> ##########################################Define fSMAPE Function#################################################
+> 
+> fSMAPE <- function(Actual, Predictions) {
++        smape = mean(abs(Actual-Predictions)/((abs(Actual)+abs(Predictions))/2), na.rm=TRUE) * 100
++        return(smape)
++ }
+> ##########################################Linear Model##########################################################
+> #build a linear model to see if its worth pursuing
+> LinearModel = lm(Y_Target~.,data = df_for_models_train)
+> #check the summary for R^2
+> summary(LinearModel)#adjusted Rsquared is 0.2727 (YIKES)
+
+Call:
+lm(formula = Y_Target ~ ., data = df_for_models_train)
+
+Residuals:
+    Min      1Q  Median      3Q     Max 
+-11.898  -1.272  -0.287   0.623 278.265 
+
+Coefficients:
+                        Estimate Std. Error t value Pr(>|t|)    
+(Intercept)           -2.060e+02  2.628e+01  -7.838 4.61e-15 ***
+cfips                 -7.699e-06  8.128e-07  -9.472  < 2e-16 ***
+pct_bb_2017            6.371e-02  7.102e-03   8.971  < 2e-16 ***
+pct_bb_2018           -3.504e-03  1.073e-02  -0.326 0.744072    
+pct_bb_2019           -1.277e-02  9.758e-03  -1.309 0.190587    
+pct_bb_2020           -2.760e-02  9.295e-03  -2.970 0.002982 ** 
+pct_bb_2021            1.495e-02  7.407e-03   2.019 0.043518 *  
+pct_college_2017       1.684e-01  1.342e-02  12.546  < 2e-16 ***
+pct_college_2018      -1.615e-02  1.864e-02  -0.867 0.386103    
+pct_college_2019       6.656e-02  1.593e-02   4.179 2.93e-05 ***
+pct_college_2020      -1.353e-01  1.377e-02  -9.829  < 2e-16 ***
+pct_college_2021       2.543e-01  1.153e-02  22.052  < 2e-16 ***
+pct_foreign_born_2017  9.006e-02  1.952e-02   4.613 3.97e-06 ***
+pct_foreign_born_2018  1.402e-01  2.656e-02   5.279 1.30e-07 ***
+pct_foreign_born_2019 -3.709e-01  2.333e-02 -15.897  < 2e-16 ***
+pct_foreign_born_2020  3.845e-01  2.267e-02  16.957  < 2e-16 ***
+pct_foreign_born_2021 -1.412e-01  1.845e-02  -7.655 1.94e-14 ***
+pct_it_workers_2017    8.207e-02  2.799e-02   2.932 0.003369 ** 
+pct_it_workers_2018    2.795e-01  3.846e-02   7.266 3.73e-13 ***
+pct_it_workers_2019   -4.383e-01  3.587e-02 -12.219  < 2e-16 ***
+pct_it_workers_2020    3.958e-01  3.166e-02  12.503  < 2e-16 ***
+pct_it_workers_2021    5.560e-02  2.652e-02   2.096 0.036072 *  
+median_hh_inc_2017    -1.109e-04  6.816e-06 -16.271  < 2e-16 ***
+median_hh_inc_2018     2.370e-05  9.155e-06   2.589 0.009627 ** 
+median_hh_inc_2019    -1.284e-05  7.786e-06  -1.650 0.099042 .  
+median_hh_inc_2020     5.073e-05  6.650e-06   7.628 2.40e-14 ***
+median_hh_inc_2021     3.237e-05  5.116e-06   6.327 2.50e-10 ***
+month                  1.262e-02  3.801e-03   3.322 0.000896 ***
+year                   1.001e-01  1.300e-02   7.695 1.43e-14 ***
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+Residual standard error: 4.258 on 122119 degrees of freedom
+  (117 observations deleted due to missingness)
+Multiple R-squared:  0.2729,	Adjusted R-squared:  0.2727 
+F-statistic:  1637 on 28 and 122119 DF,  p-value: < 2.2e-16
+
+> #make predictions using the linear model
+> predictions <- predict(LinearModel, newdata=df_for_models_test_no2023)
+> #calculate SMAPE
+> SMAPE = fSMAPE(data_test_revealed$microbusiness_density, predictions) 
+> #print the SMAPE to check it
+> print(SMAPE)#44.08701
+[1] 44.08701
+> ############################# XGBOOST!!!!!! ####################################
+> #Xgboost train data creation
+> dtrain <- xgb.DMatrix(data = x_train, label = y_train)
+> #XGBoost test data creation
+> dtest <- xgb.DMatrix(data = x_test, label = y_test)
+> #create an empty Results list for our SMAPE's
+> Results = c()
+> #create an empty list to store the depth we are using
+> depths = c()
+> #create an empty list to store the learning rate we are using
+> etas = c()
+> #initialize a counter so we append things to the right place
+> count = 1
+> #Find best model parameters for the model using for loop
+> ####!!!!!!!!!!!!!!!!!!!do not run this in class it is slow!!!!!!!!!!!!!!!!!!!!!!
+> #iterate through depths from 1 to 20
+> for (i in 1:20){
++        #iterate through learning rates from 0.1 to 1.0
++        for (x in 1:10){
++               #set the parameter for this model
++               params <- list(max_depth = i, eta = (0.1*x), objective = "reg:squarederror")
++               #create the model
++               model <- xgb.train(params = params, data = dtrain, nrounds = 100)
++               # Make predictions on the test set
++               pred <- predict(model, dtest)
++               # Evaluate the model's rmse
++               rmse <- sqrt(mean((pred - y_test)^2))
++               #calculate the model's Symetrical Mean Absolute Percent Error
++               SMAPE = fSMAPE(y_test,pred)
++               #append SMAPE to the results list
++               Results[count]= SMAPE
++               #put the depth in the depths list
++               depths[count] = i
++               #put the learning rate in the etas list
++               etas[count] = (x*0.1)
++               #add one to the counter so the next time the foor loop runs stuff
++               ####goes to the right place
++               count=count+1
++               #print rmse, SMAPE, depth and learning rate *10 every loop to track 
++               ####where in the for loop it is as it runs slow and its useful to 
++               ####see its progress
++               print(c(rmse,SMAPE,i,x))
++        }
++ }
+[1]  5.44454 37.18100  1.00000  1.00000
+[1]  5.227238 36.922446  1.000000  2.000000
+[1]  5.106096 36.914972  1.000000  3.000000
+[1]  5.009165 37.155969  1.000000  4.000000
+[1]  4.950665 37.779005  1.000000  5.000000
+[1]  4.920018 37.982590  1.000000  6.000000
+[1]  4.87363 37.62428  1.00000  7.00000
+[1]  4.826563 38.903999  1.000000  8.000000
+[1]  4.809091 39.560488  1.000000  9.000000
+[1]  4.767931 38.901051  1.000000 10.000000
+[1]  4.813127 34.310984  2.000000  1.000000
+[1]  4.44583 33.11008  2.00000  2.00000
+[1]  4.27113 32.67783  2.00000  3.00000
+[1]  4.043232 32.383439  2.000000  4.000000
+[1]  4.049732 32.635236  2.000000  5.000000
+[1]  4.076691 34.987414  2.000000  6.000000
+[1]  4.024891 34.350348  2.000000  7.000000
+[1]  3.946365 34.655597  2.000000  8.000000
+[1]  4.009507 37.019184  2.000000  9.000000
+[1]  3.884229 37.954811  2.000000 10.000000
+[1]  4.15236 32.10879  3.00000  1.00000
+[1]  3.718562 30.030221  3.000000  2.000000
+[1]  3.582793 29.362229  3.000000  3.000000
+[1]  3.344826 27.982564  3.000000  4.000000
+[1]  3.174935 27.611475  3.000000  5.000000
+[1]  3.210352 26.212145  3.000000  6.000000
+[1]  3.017566 27.061415  3.000000  7.000000
+[1]  3.049417 25.890219  3.000000  8.000000
+[1]  2.964077 26.122604  3.000000  9.000000
+[1]  2.780255 27.092535  3.000000 10.000000
+[1]  3.445501 29.443284  4.000000  1.000000
+[1]  3.139296 26.442212  4.000000  2.000000
+[1]  3.127526 23.825507  4.000000  3.000000
+[1]  2.770537 22.116483  4.000000  4.000000
+[1]  3.153836 19.738252  4.000000  5.000000
+[1]  3.148728 19.775957  4.000000  6.000000
+[1]  2.403599 20.137318  4.000000  7.000000
+[1]  2.178673 17.505034  4.000000  8.000000
+[1]  3.097352 19.134377  4.000000  9.000000
+[1]  2.78790 20.84448  4.00000 10.00000
+[1]  2.978282 26.288077  5.000000  1.000000
+[1]  2.724839 21.208967  5.000000  2.000000
+[1]  2.359725 17.437902  5.000000  3.000000
+[1]  1.758094 15.406430  5.000000  4.000000
+[1]  2.032164 15.243287  5.000000  5.000000
+[1]  1.694853 13.594356  5.000000  6.000000
+[1]  2.155219 14.022495  5.000000  7.000000
+[1]  1.744936 12.681339  5.000000  8.000000
+[1]  2.016231 12.987775  5.000000  9.000000
+[1]  1.233195 13.660690  5.000000 10.000000
+[1]  2.266395 22.254625  6.000000  1.000000
+[1]  1.724332 16.616199  6.000000  2.000000
+[1]  1.49825 13.29394  6.00000  3.00000
+[1]  1.640157 11.119853  6.000000  4.000000
+[1] 1.104338 9.383083 6.000000 5.000000
+[1]  1.089592 10.073888  6.000000  6.000000
+[1] 0.8826453 9.0244646 6.0000000 7.0000000
+[1] 1.21267 9.69699 6.00000 8.00000
+[1] 0.8186513 9.7877149 6.0000000 9.0000000
+[1]  0.7370891 10.7882462  6.0000000 10.0000000
+[1]  1.890343 17.758407  7.000000  1.000000
+[1]  1.045568 12.209577  7.000000  2.000000
+[1] 0.9862055 9.3725899 7.0000000 3.0000000
+[1] 0.7062997 8.1498262 7.0000000 4.0000000
+[1] 0.6103934 7.6854884 7.0000000 5.0000000
+[1] 0.5528976 7.5305800 7.0000000 6.0000000
+[1] 0.705552 7.404807 7.000000 7.000000
+[1] 0.9288644 6.8214778 7.0000000 8.0000000
+[1] 0.8938412 6.5192220 7.0000000 9.0000000
+[1]  0.5656334  8.0823568  7.0000000 10.0000000
+[1]  1.227898 14.180270  8.000000  1.000000
+[1] 0.7685285 9.3630088 8.0000000 2.0000000
+[1] 0.7965097 7.1168694 8.0000000 3.0000000
+[1] 0.794957 6.330862 8.000000 4.000000
+[1] 0.4542884 5.9153902 8.0000000 5.0000000
+[1] 0.5631814 5.7012663 8.0000000 6.0000000
+[1] 0.5984598 6.1134418 8.0000000 7.0000000
+[1] 0.4727175 6.1148146 8.0000000 8.0000000
+[1] 0.4490445 5.7437277 8.0000000 9.0000000
+[1]  0.4972558  6.0296403  8.0000000 10.0000000
+[1]  0.7531949 10.7627568  9.0000000  1.0000000
+[1] 0.4905316 6.6425607 9.0000000 2.0000000
+[1] 0.4174166 5.1791729 9.0000000 3.0000000
+[1] 0.378718 4.629976 9.000000 4.000000
+[1] 0.3907325 4.6709528 9.0000000 5.0000000
+[1] 0.3741909 4.4448279 9.0000000 6.0000000
+[1] 0.4003506 5.0239250 9.0000000 7.0000000
+[1] 0.3468396 4.2398824 9.0000000 8.0000000
+[1] 0.4066289 4.5422340 9.0000000 9.0000000
+[1]  0.3711413  4.5709767  9.0000000 10.0000000
+[1]  0.5968086  7.9815495 10.0000000  1.0000000
+[1]  0.4742388  4.8069017 10.0000000  2.0000000
+[1]  0.3630772  3.9913439 10.0000000  3.0000000
+[1]  0.540256  3.849487 10.000000  4.000000
+[1]  0.4536112  3.8421463 10.0000000  5.0000000
+[1]  0.4520614  3.7534254 10.0000000  6.0000000
+[1]  0.3820763  3.7941313 10.0000000  7.0000000
+[1]  0.3499058  3.7029625 10.0000000  8.0000000
+[1]  0.3557765  4.4022842 10.0000000  9.0000000
+[1]  0.4027317  4.2032652 10.0000000 10.0000000
+[1]  0.4844731  6.1806702 11.0000000  1.0000000
+[1]  0.3516237  3.6062146 11.0000000  2.0000000
+[1]  0.3443719  3.4099541 11.0000000  3.0000000
+[1]  0.3782344  3.3991002 11.0000000  4.0000000
+[1]  0.4866353  3.3164294 11.0000000  5.0000000
+[1]  0.3742054  3.1637491 11.0000000  6.0000000
+[1]  0.390509  3.575673 11.000000  7.000000
+[1]  0.3582709  3.8944892 11.0000000  8.0000000
+[1]  0.392964  3.824984 11.000000  9.000000
+[1]  0.4456487  3.6074201 11.0000000 10.0000000
+[1]  0.5423643  4.9386976 12.0000000  1.0000000
+[1]  0.6249972  3.3766075 12.0000000  2.0000000
+[1]  0.6084482  2.9991465 12.0000000  3.0000000
+[1]  0.4504268  2.8138091 12.0000000  4.0000000
+[1]  0.3815806  3.0434012 12.0000000  5.0000000
+[1]  0.3581677  3.2969449 12.0000000  6.0000000
+[1]  0.3483554  2.9921683 12.0000000  7.0000000
+[1]  0.333439  3.407058 12.000000  8.000000
+[1]  0.3319791  3.3261485 12.0000000  9.0000000
+[1]  0.3401343  3.2663839 12.0000000 10.0000000
+[1]  0.5517085  3.7138136 13.0000000  1.0000000
+[1]  0.4562133  2.8631472 13.0000000  2.0000000
+[1]  0.6127814  2.6988206 13.0000000  3.0000000
+[1]  0.7145916  2.7962517 13.0000000  4.0000000
+[1]  0.6399198  2.7277391 13.0000000  5.0000000
+[1]  0.3931939  2.8152703 13.0000000  6.0000000
+[1]  0.3590254  3.3713583 13.0000000  7.0000000
+[1]  0.3593745  3.5982508 13.0000000  8.0000000
+[1]  0.3797312  3.7804152 13.0000000  9.0000000
+[1]  0.3652727  3.4544155 13.0000000 10.0000000
+[1]  0.5486809  3.0071537 14.0000000  1.0000000
+[1]  0.5481993  2.6301546 14.0000000  2.0000000
+[1]  0.6090906  2.6111879 14.0000000  3.0000000
+[1]  0.6932402  2.7503154 14.0000000  4.0000000
+[1]  0.5682109  2.7387152 14.0000000  5.0000000
+[1]  0.4170864  2.7503889 14.0000000  6.0000000
+[1]  0.3548075  3.2673147 14.0000000  7.0000000
+[1]  0.330275  2.928609 14.000000  8.000000
+[1]  0.3611093  3.0708027 14.0000000  9.0000000
+[1]  0.4551529  3.8554042 14.0000000 10.0000000
+[1]  0.6230584  2.6231103 15.0000000  1.0000000
+[1]  0.5581247  2.4040028 15.0000000  2.0000000
+[1]  0.6180484  2.5281185 15.0000000  3.0000000
+[1]  0.695808  2.651030 15.000000  4.000000
+[1]  0.5741633  2.5902669 15.0000000  5.0000000
+[1]  0.5631667  2.7978985 15.0000000  6.0000000
+[1]  0.3768786  3.0709127 15.0000000  7.0000000
+[1]  0.3331895  3.0650810 15.0000000  8.0000000
+[1]  0.3156333  3.1927613 15.0000000  9.0000000
+[1]  0.3499416  3.3494542 15.0000000 10.0000000
+[1]  0.6275396  2.4397467 16.0000000  1.0000000
+[1]  0.5771428  2.4825522 16.0000000  2.0000000
+[1]  0.6106524  2.4329698 16.0000000  3.0000000
+[1]  0.6984408  2.5113817 16.0000000  4.0000000
+[1]  0.5899273  2.4203738 16.0000000  5.0000000
+[1]  0.4032577  2.7334779 16.0000000  6.0000000
+[1]  0.3205283  2.7844129 16.0000000  7.0000000
+[1]  0.3442553  3.1225161 16.0000000  8.0000000
+[1]  0.3275055  3.6097892 16.0000000  9.0000000
+[1]  0.4237932  2.9848500 16.0000000 10.0000000
+[1]  0.6429432  2.4189318 17.0000000  1.0000000
+[1]  0.5842522  2.3650735 17.0000000  2.0000000
+[1]  0.6157896  2.3469942 17.0000000  3.0000000
+[1]  0.7179584  2.4501363 17.0000000  4.0000000
+[1]  0.5990306  2.4205277 17.0000000  5.0000000
+[1]  0.4569454  2.4165257 17.0000000  6.0000000
+[1]  0.3135624  2.5225242 17.0000000  7.0000000
+[1]  0.3359521  3.1372304 17.0000000  8.0000000
+[1]  0.3326898  2.7884968 17.0000000  9.0000000
+[1]  0.3528258  2.9935638 17.0000000 10.0000000
+[1]  0.6466945  2.3595379 18.0000000  1.0000000
+[1]  0.583822  2.417713 18.000000  2.000000
+[1]  0.633166  2.479919 18.000000  3.000000
+[1]  0.7155832  2.3292377 18.0000000  4.0000000
+[1]  0.5976983  2.5722313 18.0000000  5.0000000
+[1]  0.5854414  2.4216649 18.0000000  6.0000000
+[1]  0.3316538  2.6154024 18.0000000  7.0000000
+[1]  0.3288325  2.5773032 18.0000000  8.0000000
+[1]  0.3099741  2.6598418 18.0000000  9.0000000
+[1]  0.321404  2.662656 18.000000 10.000000
+[1]  0.6463403  2.2869564 19.0000000  1.0000000
+[1]  0.5876414  2.3777320 19.0000000  2.0000000
+[1]  0.6305804  2.3803129 19.0000000  3.0000000
+[1]  0.7175976  2.4855301 19.0000000  4.0000000
+[1]  0.594029  2.417099 19.000000  5.000000
+[1]  0.589993  2.749728 19.000000  6.000000
+[1]  0.4768583  2.5430349 19.0000000  7.0000000
+[1]  0.3097529  2.4421676 19.0000000  8.0000000
+[1]  0.3193882  2.6197609 19.0000000  9.0000000
+[1]  0.3649737  2.7741589 19.0000000 10.0000000
+[1]  0.645133  2.276783 20.000000  1.000000
+[1]  0.5894124  2.4133026 20.0000000  2.0000000
+[1]  0.6336946  2.4417008 20.0000000  3.0000000
+[1]  0.7170138  2.3544193 20.0000000  4.0000000
+[1]  0.5908283  2.4302916 20.0000000  5.0000000
+[1]  0.600078  2.371180 20.000000  6.000000
+[1]  0.4773243  2.4067172 20.0000000  7.0000000
+[1]  0.3105333  2.4452320 20.0000000  8.0000000
+[1]  0.3078276  2.4193083 20.0000000  9.0000000
+[1]  0.3227541  2.9263502 20.0000000 10.0000000
+> #Find the index that has the lowest SMAPE
+> index_to_use = which.min(Results)
+> #Use the index to retrieve the lowest SMAPE
+> Min_SMAPE = Results[index_to_use]
+> #Use the index to find the best depth to use
+> depth_to_use = depths[index_to_use]
+> #Use the index to find the best learning rate (estimate) to use
+> eta_to_use = etas[index_to_use]
+> #print so you can see
+> print(Min_SMAPE) #1.138392
+[1] 2.276783
+> #print so you can see
+> print(depth_to_use) #20
+[1] 20
+> #print so you can see
+> print(eta_to_use) #0.1
+[1] 0.1
+> #Now we look to see if there is a learning rate better than 0.1 for a max_depth of 20
+> ####!!!!!!!!!!!!!!!again do not run this in class it is slow!!!!!!!!!!!!!!!!!!!!
+> ####by searching 0.01-0.3 by increments of 0.1
+> #create a place to store SMAPE's for each model
+> Results1 = c()
+> #create a place to store depth (should always be 14 for this for loop)
+> depths1 = c()
+> #create a place to store the learning rates we are using
+> etas1 = c()
+> #initialize the counter
+> count1 = 1
+> #set i to 20 permanently (best depth from model above)
+> for (i in 20){
++        #use .01 to .03 so that we can look at learning rates of .2 to .4 in increments of 0.01
++        for (x in seq(.01,.3,.01)){
++               #create parameters for each model
++               params <- list(max_depth = i, eta = (x), objective = "reg:squarederror")
++               #create the model each time
++               model <- xgb.train(params = params, data = dtrain, nrounds = 100)
++               # Make predictions on the test set
++               pred <- predict(model, dtest)
++               # Evaluate the model's rmse
++               rmse <- sqrt(mean((pred - y_test)^2))
++               # calculate the modeles Symetrical Mean Absolute Percent Error
++               SMAPE = fSMAPE(y_test,pred)
++               #append SMAPE to the results1 list 
++               Results1[count1]= SMAPE
++               #append the depth to the depths1 list
++               depths1[count1] = i
++               #append the learning rate to the etas1 list
++               etas1[count1] = (x)
++               #add one to the counter so the next time the foor loop runs stuff
++               ####goes to the right place
++               count1=count1+1
++               #print rmse, SMAPE, depth and learning rate *10 every loop to track 
++               ####where in the for loop it is as it runs slow and its useful to 
++               ####see its progress
++               print(c(rmse,SMAPE,i,x))
++        }
++ }
+[1]  3.707651 36.580367 20.000000  0.010000
+[1]  2.060396 14.221573 20.000000  0.020000
+[1]  1.269765  6.948208 20.000000  0.030000
+[1]  0.9388593  4.2205901 20.0000000  0.0400000
+[1]  0.7644243  3.1153969 20.0000000  0.0500000
+[1]  0.6901776  2.6495053 20.0000000  0.0600000
+[1]  0.6667663  2.4556172 20.0000000  0.0700000
+[1]  0.6580545  2.3658371 20.0000000  0.0800000
+[1]  0.6067463  2.3128038 20.0000000  0.0900000
+[1]  0.645133  2.276783 20.000000  0.100000
+[1]  0.6701147  2.3053289 20.0000000  0.1100000
+[1]  0.6318557  2.3205946 20.0000000  0.1200000
+[1]  0.6155046  2.3030093 20.0000000  0.1300000
+[1]  0.6653114  2.3188923 20.0000000  0.1400000
+[1]  0.6412666  2.2869403 20.0000000  0.1500000
+[1]  0.6881445  2.2522310 20.0000000  0.1600000
+[1]  0.6135976  2.2980956 20.0000000  0.1700000
+[1]  0.6462895  2.3391565 20.0000000  0.1800000
+[1]  0.6060027  2.3042210 20.0000000  0.1900000
+[1]  0.5894124  2.4133026 20.0000000  0.2000000
+[1]  0.701397  2.338295 20.000000  0.210000
+[1]  0.6485481  2.3265231 20.0000000  0.2200000
+[1]  0.7990973  2.3808187 20.0000000  0.2300000
+[1]  0.778509  2.382368 20.000000  0.240000
+[1]  0.6764978  2.3129257 20.0000000  0.2500000
+[1]  0.7254345  2.3271865 20.0000000  0.2600000
+[1]  0.6898632  2.3483499 20.0000000  0.2700000
+[1]  0.9664091  2.3621532 20.0000000  0.2800000
+[1]  0.7398602  2.4046432 20.0000000  0.2900000
+[1]  0.6336946  2.4417008 20.0000000  0.3000000
+> #look at results from testing the model
+> #find what index has the lowest SMAPE
+> index_to_use1 = which.min(Results1)
+> #find out what the lowest SMAPE is 
+> Min_SMAPE1 = Results1[index_to_use1]
+> #Use the index to find the best depth to use
+> depth_to_use1 = depths1[index_to_use1]
+> #use the index to fing the best learning rate to use
+> eta_to_use1 = etas1[index_to_use1]
+> #print so you can see
+> print(Min_SMAPE1)#1.126116
+[1] 2.252231
+> #print out the best depth to use
+> print(depth_to_use1) #20
+[1] 20
+> #print out the best learning rate to use
+> print(eta_to_use1) #0.16
+[1] 0.16
+> #create model based on best parameters
+> params <- list(max_depth = 20, eta = .16, objective = "reg:squarederror")
+> #build the model
+> model <- xgb.train(params = params, data = dtrain, nrounds = 100)
+> # Make predictions on the test set
+> pred <- predict(model, dtest)
+> # Evaluate the model
+> SMAPE = fSMAPE(y_test,pred)
+> #print the SMAPE
+> SMAPE
+[1] 2.252231
